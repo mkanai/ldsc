@@ -17,6 +17,10 @@ import traceback
 import copy
 import os
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
 
 _N_CHR = 22
 # complementary bases
@@ -341,6 +345,7 @@ def estimate_rg(args, log):
         try:
             loop = _read_other_sumstats(args, log, p2, sumstats, ref_ld_cnames)
             rghat = _rg(loop, args, log, M_annot, ref_ld_cnames, w_ld_cname, i)
+            _plot(loop, args, ref_ld_cnames, i)
             RG.append(rghat)
             _print_gencor(args, log, rghat, ref_ld_cnames, i, rg_paths, i == 0)
             out_prefix_loop = out_prefix + '_' + rg_files[i + 1]
@@ -470,6 +475,36 @@ def _rg(sumstats, args, log, M_annot, ref_ld_cnames, w_ld_cname, i):
                    intercept_gencov=intercepts[2], n_blocks=n_blocks, twostep=args.two_step)
 
     return rghat
+
+
+def _plot(sumstats, args, ref_ld_cnames, i):
+    '''Plot the regressions.'''
+    n_snp = len(sumstats)
+    s = lambda x: np.array(x).reshape(n_snp)
+    if args.chisq_max is not None:
+        ii = sumstats.Z1**2*sumstats.Z2**2 < args.chisq_max**2
+        n_snp = np.sum(ii)  # lambdas are late binding, so this works
+        sumstats = sumstats[ii]
+    n_blocks = min(args.n_blocks, n_snp)
+    ref_ld = sumstats.as_matrix(columns=ref_ld_cnames)
+    intercepts = [args.intercept_h2[0], args.intercept_h2[
+        i + 1], args.intercept_gencov[i + 1]]
+
+    df = pd.DataFrame({'x': s(ref_ld),
+                       'z1': np.square(sumstats.Z1),
+                       'z2': np.square(sumstats.Z2),
+                       'z1z2': s(sumstats.Z1 * sumstats.Z2)})
+    df['bin'] = pd.qcut(df['x'], 50, labels=False)
+    df = df.groupby('bin').mean()
+    print(df)
+
+    plt.figure(figsize=(8, 8))
+    plt.xlabel('LD score bin')
+    plt.ylabel('Mean chisq')
+    plt.plot(df['x'], df['z1'], '.')
+    plt.plot(df['x'], df['z2'], '.')
+    plt.plot(df['x'], df['z1z2'], '.')
+    plt.savefig('{O}.{I}.png'.format(O=args.out, I=i+2), dpi=300)
 
 
 def _parse_rg(rg):
