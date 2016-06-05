@@ -659,7 +659,7 @@ def munge_sumstats(args, p=True):
         if args.merge_alleles:
             dat = allele_merge(dat, merge_alleles, log)
 
-        out_fname = args.out + '.sumstats'
+        out_fname = args.out + '.sumstats.gz'
         print_colnames = [
             c for c in dat.columns if c in ['SNP', 'N', 'Z', 'A1', 'A2']]
         if args.keep_maf and 'FRQ' in dat.columns:
@@ -669,8 +669,7 @@ def munge_sumstats(args, p=True):
             msg.format(M=len(dat), F=out_fname + '.gz', N=dat.N.notnull().sum()))
         if p:
             dat.to_csv(out_fname, sep="\t", index=False,
-                       columns=print_colnames, float_format='%.3f')
-            os.system('gzip -f {F}'.format(F=out_fname))
+                       columns=print_colnames, float_format='%.3f', compression='gzip')
 
         log.log('\nMetadata:')
         CHISQ = (dat.Z ** 2)
