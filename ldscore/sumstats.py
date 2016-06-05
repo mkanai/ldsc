@@ -20,6 +20,11 @@ import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+plt.rcParams['agg.path.chunksize'] = 10000
+try:
+    import seaborn as sns
+except ImportError:
+    pass
 
 
 _N_CHR = 22
@@ -295,6 +300,7 @@ def estimate_h2(args, log):
     hsqhat = reg.Hsq(chisq, ref_ld, s(sumstats[w_ld_cname]), s(sumstats.N),
                      M_annot, n_blocks=n_blocks, intercept=args.intercept_h2,
                      twostep=args.two_step, old_weights=old_weights)
+    _plot_h2(sumstats, args, M_annot, ref_ld_cnames, hsqhat)
 
     if args.print_cov:
         _print_cov(hsqhat, args.out + '.cov', log)
@@ -345,7 +351,7 @@ def estimate_rg(args, log):
         try:
             loop = _read_other_sumstats(args, log, p2, sumstats, ref_ld_cnames)
             rghat = _rg(loop, args, log, M_annot, ref_ld_cnames, w_ld_cname, i)
-            _plot(loop, args, ref_ld_cnames, rghat, i)
+            _plot_rg(loop, args, M_annot, ref_ld_cnames, rghat, i)
             RG.append(rghat)
             _print_gencor(args, log, rghat, ref_ld_cnames, i, rg_paths, i == 0)
             out_prefix_loop = out_prefix + '_' + rg_files[i + 1]
@@ -477,44 +483,96 @@ def _rg(sumstats, args, log, M_annot, ref_ld_cnames, w_ld_cname, i):
     return rghat
 
 
-def _plot(sumstats, args, ref_ld_cnames, rghat, i):
+def _plot_h2(sumstats, args, M_annot, ref_ld_cnames, hsqhat):
     '''Plot the regressions.'''
     n_snp = len(sumstats)
+    M = M_annot[0]
     s = lambda x: np.array(x).reshape(n_snp)
-    if args.chisq_max is not None:
-        ii = sumstats.Z1**2*sumstats.Z2**2 < args.chisq_max**2
-        n_snp = np.sum(ii)  # lambdas are late binding, so this works
-        sumstats = sumstats[ii]
-    n_blocks = min(args.n_blocks, n_snp)
     ref_ld = sumstats.as_matrix(columns=ref_ld_cnames)
-    intercepts = [args.intercept_h2[0], args.intercept_h2[
-        i + 1], args.intercept_gencov[i + 1]]
+    p = os.path.basename(args.h2).replace('.sumstats.gz', '')
 
-    df = pd.DataFrame({'ldscore': s(ref_ld),
-                       'z1': np.square(sumstats.Z1),
-                       'z2': np.square(sumstats.Z2),
-                       'z1z2': s(sumstats.Z1 * sumstats.Z2)})
-    df['bin'] = pd.qcut(df['ldscore'], 50, labels=False)
+    df = pd.DataFrame({'L2': s(ref_ld),
+                       'CHISQ': np.square(sumstats.Z)})
+    df['bin'] = pd.qcut(df['L2'], 50, labels=False)
+    df = df.groupby('bin').mean()
+    df.to_csv('{O}.h2.tsv'.format(O=args.out), sep = '\t', index=False)
+
+    fig = plt.figure(figsize=(8, 8))
+    plt.title(p)
+    plt.xlabel('LD score bin')
+    plt.ylabel('Mean chisq')
+    plt.plot(df['L2'], df['CHISQ'], 'b.')
+
+    if args.samp_prev is not None and args.pop_prev is not None and\
+            all((i is not None for i in args.samp_prev)) and all((i is not None for it in args.pop_prev)):
+        c = reg.h2_obs_to_liab(1, args.samp_prev[1], args.pop_prev[1])
+        h2 = c * hsqhat.tot
+    else:
+        h2 = hsqhat.tot
+
+    h2_int = hsqhat.intercept
+    N = sumstats.N
+    Nbar = np.mean(N)
+    _x = df['L2']
+    _y = Nbar / M * h2 * _x + h2_int
+    plt.plot(_x, _y, 'b--')
+
+    plt.savefig('{O}.h2.png'.format(O=args.out), dpi=300)
+    plt.close()
+
+
+def _plot_rg(sumstats, args, M_annot, ref_ld_cnames, rghat, i):
+    '''Plot the regressions.'''
+    n_snp = len(sumstats)
+    M = M_annot[0]
+    s = lambda x: np.array(x).reshape(n_snp)
+    ref_ld = sumstats.as_matrix(columns=ref_ld_cnames)
+    rg_paths, rg_files = _parse_rg(args.rg)
+    p1 = os.path.basename(rg_files[0]).replace('.sumstats.gz', '')
+    p2 = os.path.basename(rg_files[i+1]).replace('.sumstats.gz', '')
+
+    df = pd.DataFrame({'L2': s(ref_ld),
+                       'Z1': np.square(sumstats.Z1),
+                       'Z2': np.square(sumstats.Z2),
+                       'Z1Z2': s(sumstats.Z1 * sumstats.Z2)})
+    df['bin'] = pd.qcut(df['L2'], 50, labels=False)
     df = df.groupby('bin').mean()
     df.to_csv('{O}.rg1x{I}.tsv'.format(O=args.out, I=i+2), sep = '\t', index=False)
 
-    plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(8, 8))
+    plt.title('Trait 1 ({P}) x Trait {I} ({Q})'.format(I=i+2, P=p1, Q=p2))
+    ax1 = fig.add_subplot(1,1,1)
     plt.xlabel('LD score bin')
     plt.ylabel('Mean chisq')
-    plt.plot(df['ldscore'], df['z1'], '.', label = 'Trait 1')
-    plt.plot(df['ldscore'], df['z2'], '.', label = 'Trait {I}'.format(I=i+2))
-    plt.plot(df['ldscore'], df['z1z2'], '.', label = 'Trait 1 x {I}'.format(I=i+2))
+    ax1.plot(df['L2'], df['Z1'], 'b.', label = 'Trait 1')
+    ax1.plot(df['L2'], df['Z2'], 'g.', label = 'Trait {I}'.format(I=i+2))
+    ax1.plot(df['L2'], df['Z1Z2'], 'r.', label = 'Trait 1 x {I}'.format(I=i+2))
 
-#    rg = rghat.rg_ratio
-#    gcov_int = rghat.gencov.intercept
-#    N = np.sqrt(s(sumstats.N1) * s(sumstats.N2))
-#    Nbar = np.mean(N)
-#    _x = np.multiply(N, s(ref_ld)) # / Nbar
-#    print(sumstats, n_snp)
-#    _y = rg * N / n_snp * s(ref_ld) + gcov_int
-#    plt.plot(s(ref_ld), _y, 'r-') 
-    plt.legend()
+    for j in range(2) :
+        if args.samp_prev is not None and args.pop_prev is not None and\
+                all((i is not None for i in args.samp_prev)) and all((i is not None for it in args.pop_prev)):
+            c = reg.h2_obs_to_liab(1, args.samp_prev[1], args.pop_prev[1])
+            h2 = c * getattr(rghat, 'hsq{J}'.format(J=j+1)).tot
+        else:
+            h2 = getattr(rghat, 'hsq{J}'.format(J=j+1)).tot
+        h2_int = getattr(rghat, 'hsq{J}'.format(J=j+1)).intercept
+        N = getattr(sumstats, 'N{J}'.format(J=j+1))
+        Nbar = np.mean(N)
+        _x = df['L2']
+        _y = Nbar / M * h2 * _x + h2_int
+        ax1.plot(_x, _y, '{C}--'.format(C='b' if j==0 else 'g'))
+
+    gcov = rghat.gencov.tot
+    gcov_int = rghat.gencov.intercept
+    N = np.sqrt(s(sumstats.N1) * s(sumstats.N2))
+    Nbar = np.mean(N)
+    _x = df['L2']
+    _y = Nbar / M * gcov * _x + gcov_int
+    ax1.plot(_x, _y, 'r--')
+    handles, labels = ax1.get_legend_handles_labels()
+    ax1.legend(handles=handles[:3], labels=labels[:3])
     plt.savefig('{O}.rg1x{I}.png'.format(O=args.out, I=i+2), dpi=300)
+    plt.close()
 
 
 def _parse_rg(rg):
