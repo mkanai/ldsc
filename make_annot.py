@@ -20,14 +20,20 @@ def make_annot_files(args, bed_for_annot):
     print('making annot file')
     df_bim = pd.read_csv(args.bimfile,
             delim_whitespace=True, usecols = [0,1,2,3], names = ['CHR','SNP','CM','BP'])
-    iter_bim = [['chr'+str(x1), x2 - 1, x2] for (x1, x2) in np.array(df_bim[['CHR', 'BP']])]
-    bimbed = BedTool(iter_bim)
-    annotbed = bimbed.intersect(bed_for_annot)
-    bp = [x.start + 1 for x in annotbed]
-    df_int = pd.DataFrame({'BP': bp, 'ANNOT':1})
-    df_annot = pd.merge(df_bim, df_int, how='left', on='BP')
-    df_annot.fillna(0, inplace=True)
-    df_annot = df_annot[['ANNOT']].astype(int)
+    df_bim_unique = df_bim.drop_duplicates(subset=['CHR', 'BP'])
+
+    iter_bim = [['chr'+str(x1), x2 - 1, x2] for (x1, x2) in np.array(df_bim_unique[['CHR', 'BP']])]
+    bim_bedtool = BedTool(iter_bim)
+    df_int = bim_bedtool.intersect(bed_for_annot).to_dataframe()
+    df_int.columns = ['CHR', 'BP', 'BP_END']
+    df_int['CHR'] = df_int['CHR'].str.replace('chr','')
+    df_int['CHR'] = df_int['CHR'].astype(int)
+    df_int['BP'] = df_int['BP'] + 1
+    df_annot = df_bim[['CHR', 'BP', 'SNP', 'CM']].copy()
+    df_annot = df_annot.merge(
+        df_int[['CHR', 'BP']].assign(ANNOT=1), on=['CHR', 'BP'], how='left')
+    df_annot = df_annot[['ANNOT']].fillna(0).astype(int)
+
     if args.annot_file.endswith('.gz'):
         with gzip.open(args.annot_file, 'wb') as f:
             df_annot.to_csv(f, sep = "\t", index = False)
