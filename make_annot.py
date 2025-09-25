@@ -24,11 +24,16 @@ def make_annot_files(args, bed_for_annot):
 
     iter_bim = [['chr'+str(x1), x2 - 1, x2] for (x1, x2) in np.array(df_bim_unique[['CHR', 'BP']])]
     bim_bedtool = BedTool(iter_bim)
-    df_int = bim_bedtool.intersect(bed_for_annot).to_dataframe()
-    df_int.columns = ['CHR', 'BP', 'BP_END']
-    df_int['CHR'] = df_int['CHR'].str.replace('chr','')
-    df_int['CHR'] = df_int['CHR'].astype(int)
-    df_int['BP'] = df_int['BP'] + 1
+    try:
+        df_int = bim_bedtool.intersect(bed_for_annot).to_dataframe()
+        df_int.columns = ['CHR', 'BP', 'BP_END']
+        df_int['CHR'] = df_int['CHR'].str.replace('chr','')
+        df_int['CHR'] = df_int['CHR'].astype(int)
+        df_int['BP'] = df_int['BP'] + 1
+    except pd.errors.EmptyDataError:
+        # No intersections - all annotations are 0
+        df_int = pd.DataFrame(columns=['CHR', 'BP'])
+
     df_annot = df_bim[['CHR', 'BP', 'SNP', 'CM']].copy()
     df_annot = df_annot.merge(
         df_int[['CHR', 'BP']].assign(ANNOT=1), on=['CHR', 'BP'], how='left')
